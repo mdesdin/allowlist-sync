@@ -337,7 +337,18 @@ journalctl -u allowlist-sync-cloudflare.service -n 200 --no-pager
 
 ---
 
-## Notes / troubleshooting
+## Design Notes
+
+* DNS is treated as the **authoritative source**
+* IPv4 addresses are always handled as individual hosts
+* IPv6 prefix mode collapses multiple AAAA records into a single delegated network
+* Locking is handled by `flock` in the systemd service (no overlapping runs)
+* Discord webhook failures never block allowlist updates
+* Logging goes to `journald` automatically
+
+---
+
+## Troubleshooting
 
 * If Traefik runs as a non-root user and cannot write the YAML files, set:
 
