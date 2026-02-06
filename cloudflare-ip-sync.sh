@@ -99,19 +99,21 @@ def replace_block(text, name, items):
     if not ms:
         return text, False
 
-    def render(indent):
-        dash_indent = indent + "    "
-        out = [f"{indent}# BEGIN managed cloudflare {name}\n"]
-        for it in items:
-            out.append(f"{dash_indent}- {it}\n")
-        out.append(f"{indent}# END managed cloudflare {name}\n")
-        return "".join(out)
+def render(indent, old_block_body):
+    m_dash = re.search(r"(?m)^([ \t]*)-\s+", old_block_body)
+    dash_indent = m_dash.group(1) if m_dash else indent
+
+    out = [f"{indent}# BEGIN managed cloudflare {name}\n"]
+    for it in items:
+        out.append(f"{dash_indent}- {it}\n")
+    out.append(f"{indent}# END managed cloudflare {name}\n")
+    return "".join(out)
 
     out = []
     last = 0
     for m in ms:
         out.append(text[last:m.start()])
-        out.append(render(m.group(1)))
+        out.append(render(m.group(1), m.group(2)))
         last = m.end()
     out.append(text[last:])
     return "".join(out), True

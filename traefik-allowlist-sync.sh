@@ -143,8 +143,11 @@ if not ms:
     print(src, end="")
     sys.exit(0)
 
-def render(indent):
-    dash_indent = indent + "    "
+def render(indent, old_block_body):
+    # Try to discover the indentation used by existing dash lines inside the block.
+    m_dash = re.search(r"(?m)^([ \t]*)-\s+", old_block_body)
+    dash_indent = m_dash.group(1) if m_dash else indent
+
     out = [f"{indent}# BEGIN managed: {domain}\n"]
     for it in items:
         out.append(f"{dash_indent}- {it}\n")
@@ -155,7 +158,7 @@ out = []
 last = 0
 for m in ms:
     out.append(src[last:m.start()])
-    out.append(render(m.group(1)))
+    out.append(render(m.group(1), m.group(2)))
     last = m.end()
 out.append(src[last:])
 print("".join(out), end="")
