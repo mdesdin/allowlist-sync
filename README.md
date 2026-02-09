@@ -69,9 +69,10 @@ TRAEFIK_CONTAINER="traefik"
 TRAEFIK_EXEC_USER=""
 
 # ----------------------------
-# Traefik files live INSIDE the Traefik container
+# Traefik and Cloudflare files live INSIDE the Traefik container
 # Space-separated list of file paths inside the container
 # ----------------------------
+CLOUDFLARE_FILES="/etc/traefik/traefik.yaml /etc/traefik.d/http.internalonly.yaml /etc/traefik.d/http.crowdsec.yaml"
 TRAEFIK_FILES="/etc/traefik.d/http.internalonly.yaml /etc/traefik.d/http.crowdsec.yaml"
 
 # Optional: restart Traefik container after updates (default off; config dir often watched)
@@ -198,7 +199,7 @@ TRAEFIK_RESTART=1 /opt/allowlist-sync/traefik-allowlist-sync.sh --ipv6-prefix ho
 cloudflare-ip-sync.sh
 ```
 
-Updates the Cloudflare managed blocks in all target files (defaults to `TRAEFIK_FILES`).
+Updates the Cloudflare managed blocks in all target files (defaults to `CLOUDFLARE_FILES`).
 
 Example:
 

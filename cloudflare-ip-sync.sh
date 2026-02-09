@@ -15,11 +15,11 @@ source "${LIB_DIR}/common.sh"
 # ----------------------------
 TRAEFIK_CONTAINER="${TRAEFIK_CONTAINER:-traefik}"
 TRAEFIK_EXEC_USER="${TRAEFIK_EXEC_USER:-}"  # empty = container default user
-TRAEFIK_FILES_DEFAULT="/etc/traefik.d/http.internalonly.yaml /etc/traefik.d/http.crowdsec.yaml"
-TARGET_FILES="${TARGET_FILES:-${TRAEFIK_FILES:-$TRAEFIK_FILES_DEFAULT}}"
+CLOUDFLARE_FILES_DEFAULT="/etc/traefik/traefik.yaml /etc/traefik.d/http.internalonly.yaml /etc/traefik.d/http.crowdsec.yaml"
+TARGET_FILES="${TARGET_FILES:-${CLOUDFLARE_FILES:-$CLOUDFLARE_FILES_DEFAULT}}"
 
-# Optional restart (off by default; directory expected to be watched)
-TRAEFIK_RESTART="${TRAEFIK_RESTART:-0}"
+# Optional restart (on by default; changes to traefik.yaml require a restart)
+TRAEFIK_RESTART="${TRAEFIK_RESTART:-1}"
 
 CF_V4_URL="${CF_V4_URL:-https://www.cloudflare.com/ips-v4/}"
 CF_V6_URL="${CF_V6_URL:-https://www.cloudflare.com/ips-v6/}"
@@ -92,6 +92,9 @@ def replace_block(text, name, items):
     #   # BEGIN managed cloudflare ipv4
     #   ...
     #   # END managed cloudflare ipv4
+    #   # BEGIN managed cloudflare ipv6
+    #   ...
+    #   # END managed cloudflare ipv6
     begin = re.escape(f"# BEGIN managed cloudflare {name}")
     end   = re.escape(f"# END managed cloudflare {name}")
     pat = re.compile(rf"(?ms)^([ \t]*){begin}[^\n]*\n(.*?)^([ \t]*){end}[^\n]*\n?")
@@ -99,15 +102,15 @@ def replace_block(text, name, items):
     if not ms:
         return text, False
 
-def render(indent, old_block_body):
-    m_dash = re.search(r"(?m)^([ \t]*)-\s+", old_block_body)
-    dash_indent = m_dash.group(1) if m_dash else indent
+    def render(indent, old_block_body):
+        m_dash = re.search(r"(?m)^([ \t]*)-\s+", old_block_body)
+        dash_indent = m_dash.group(1) if m_dash else indent
 
-    out = [f"{indent}# BEGIN managed cloudflare {name}\n"]
-    for it in items:
-        out.append(f"{dash_indent}- {it}\n")
-    out.append(f"{indent}# END managed cloudflare {name}\n")
-    return "".join(out)
+        out = [f"{indent}# BEGIN managed cloudflare {name}\n"]
+        for it in items:
+            out.append(f"{dash_indent}- {it}\n")
+        out.append(f"{indent}# END managed cloudflare {name}\n")
+        return "".join(out)
 
     out = []
     last = 0
