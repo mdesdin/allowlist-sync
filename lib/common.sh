@@ -55,18 +55,59 @@ print(f"{net.network_address}/{plen}")
 # ----------------------------
 # DNS resolve helpers
 # ----------------------------
+filter_valid_ip_or_cidr() {
+  # Reads lines from stdin, prints only valid IPv4/IPv6 or CIDR blocks.
+  "$PYTHON3" - <<'PY'
+import sys, ipaddress
+for line in sys.stdin:
+    s = line.strip()
+    if not s:
+        continue
+    # accept single IP or CIDR
+    try:
+        if "/" in s:
+            ipaddress.ip_network(s, strict=False)
+        else:
+            ipaddress.ip_address(s)
+        print(s)
+    except Exception:
+        pass
+PY
+}
+
 resolve_dns() {
-  # Outputs two bash arrays by name reference:
-  #   resolve_dns "domain" A_ARR AAAA_ARR
+  # resolve_dns "domain" A_ARR AAAA_ARR
   local domain="$1"
   local -n _a="$2"
   local -n _aaaa="$3"
 
-  mapfile -t _a < <("$DIG" +short A "$domain" | "$AWK" 'NF')
-  mapfile -t _aaaa < <("$DIG" +short AAAA "$domain" | "$AWK" 'NF')
+  # Make dig fail faster; adjust if you prefer
+  local -a dig_opts=(+short +time=2 +tries=1)
 
+  local out_a out_aaaa
+  local rc_a rc_aaaa
+
+  out_a="$("$DIG" "${dig_opts[@]}" A "$domain" 2>&1)" || rc_a=$?
+  rc_a="${rc_a:-0}"
+
+  out_aaaa="$("$DIG" "${dig_opts[@]}" AAAA "$domain" 2>&1)" || rc_aaaa=$?
+  rc_aaaa="${rc_aaaa:-0}"
+
+  # Filter strictly: keep only IP/CIDR lines
+  mapfile -t _a < <(printf "%s\n" "$out_a" | filter_valid_ip_or_cidr)
+  mapfile -t _aaaa < <(printf "%s\n" "$out_aaaa" | filter_valid_ip_or_cidr)
+
+  # If dig failed and we got no valid records, treat as error and show useful context
   if (( ${#_a[@]} == 0 && ${#_aaaa[@]} == 0 )); then
-    die "DNS returned no A/AAAA records for ${domain}"
+    # Prefer the most informative output
+    local diag="A(rc=$rc_a): $out_a"
+    diag="$diag"$'\n'"AAAA(rc=$rc_aaaa): $out_aaaa"
+    die "DNS lookup failed or returned no valid A/AAAA records for ${domain}. Output:\n${diag}"
+  fi
+
+  # If dig returned nonzero but we still got valid records, log a warning
+  if (( rc_a != 0 || rc_aaaa != 0 )); then
+    log "Warning: dig returned non-zero (A rc=$rc_a, AAAA rc=$rc_aaaa) but valid records were parsed for ${domain}"
   fi
 }
 
