@@ -22,7 +22,16 @@ DISCORD_DEBUG="${DISCORD_DEBUG:-0}"
 # Logging helpers
 # ----------------------------
 log() { echo "[$(date -Is)] $*"; }
-die() { echo "ERROR: $*" >&2; exit 1; }
+die() {
+  local msg="$*"
+  echo "ERROR: $msg" >&2
+
+  if declare -F discord_notify_error >/dev/null 2>&1; then
+    discord_notify_error "${DOMAIN:-unknown}" "${CTX:-unknown}" "$msg"
+  fi
+
+  exit 1
+}
 
 require_bins() {
   local b
@@ -57,13 +66,13 @@ print(f"{net.network_address}/{plen}")
 # ----------------------------
 filter_valid_ip_or_cidr() {
   # Reads lines from stdin, prints only valid IPv4/IPv6 or CIDR blocks.
-  "$PYTHON3" - <<'PY'
+  "$PYTHON3" -c '
 import sys, ipaddress
+
 for line in sys.stdin:
     s = line.strip()
     if not s:
         continue
-    # accept single IP or CIDR
     try:
         if "/" in s:
             ipaddress.ip_network(s, strict=False)
@@ -72,7 +81,7 @@ for line in sys.stdin:
         print(s)
     except Exception:
         pass
-PY
+'
 }
 
 resolve_dns() {
@@ -85,21 +94,17 @@ resolve_dns() {
   local -a dig_opts=(+short +time=2 +tries=1)
 
   local out_a out_aaaa
-  local rc_a rc_aaaa
+  local rc_a=0 rc_aaaa=0
 
   out_a="$("$DIG" "${dig_opts[@]}" A "$domain" 2>&1)" || rc_a=$?
-  rc_a="${rc_a:-0}"
-
   out_aaaa="$("$DIG" "${dig_opts[@]}" AAAA "$domain" 2>&1)" || rc_aaaa=$?
-  rc_aaaa="${rc_aaaa:-0}"
 
-  # Filter strictly: keep only IP/CIDR lines
-  mapfile -t _a < <(printf "%s\n" "$out_a" | filter_valid_ip_or_cidr)
-  mapfile -t _aaaa < <(printf "%s\n" "$out_aaaa" | filter_valid_ip_or_cidr)
+  # Filter strictly: keep only valid IP/CIDR lines
+  mapfile -t _a < <(printf '%s\n' "$out_a" | filter_valid_ip_or_cidr)
+  mapfile -t _aaaa < <(printf '%s\n' "$out_aaaa" | filter_valid_ip_or_cidr)
 
-  # If dig failed and we got no valid records, treat as error and show useful context
+  # If both are empty after filtering, treat as failure
   if (( ${#_a[@]} == 0 && ${#_aaaa[@]} == 0 )); then
-    # Prefer the most informative output
     local diag="A(rc=$rc_a): $out_a"
     diag="$diag"$'\n'"AAAA(rc=$rc_aaaa): $out_aaaa"
     die "DNS lookup failed or returned no valid A/AAAA records for ${domain}. Output:\n${diag}"
@@ -115,7 +120,7 @@ build_desired_items() {
   # build_desired_items A_ARR AAAA_ARR ipv6_mode prefixlen OUT_ARR
   local -n _a="$1"
   local -n _aaaa="$2"
-  local ipv6_mode="$3"     # host|prefix
+  local ipv6_mode="$3" # host|prefix
   local prefixlen="$4"
   local -n _out="$5"
 
@@ -191,8 +196,10 @@ extra = sys.argv[4]
 raw = sys.stdin.read().splitlines()
 items = []
 for line in raw:
-    if line == "ITEMS": continue
-    if line.strip(): items.append(line.strip())
+    if line == "ITEMS":
+        continue
+    if line.strip():
+        items.append(line.strip())
 
 v4 = [x for x in items if ":" not in x]
 v6 = [x for x in items if ":" in x]
@@ -213,29 +220,33 @@ def block(lines, max_chars=900):
     return f"```text\n{out.rstrip()}\n```"
 
 if action == "add":
-    color = 3066993; emoji = "🟢"
+    color = 3066993
+    emoji = "🟢"
 elif action == "remove":
-    color = 15158332; emoji = "🔴"
+    color = 15158332
+    emoji = "🔴"
 else:
-    color = 9807270; emoji = "ℹ️"
+    color = 9807270
+    emoji = "ℹ️"
 
 fields = [
-  {"name": "Action", "value": action, "inline": True},
-  {"name": "Domain", "value": domain, "inline": True},
-  {"name": "Context", "value": ctx, "inline": False},
+    {"name": "Action", "value": action, "inline": True},
+    {"name": "Domain", "value": domain, "inline": True},
+    {"name": "Context", "value": ctx, "inline": False},
 ]
+
 if extra:
-  fields.append({"name": "Details", "value": extra, "inline": False})
+    fields.append({"name": "Details", "value": extra, "inline": False})
 
 fields.append({"name": "IPv4", "value": block(v4), "inline": False})
 fields.append({"name": "IPv6 / Prefixes", "value": block(v6), "inline": False})
 
 embed = {
-  "title": f"{emoji} Allowlist sync update",
-  "color": color,
-  "fields": fields,
-  "footer": {"text": "allowlist-sync"},
-  "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    "title": f"{emoji} Allowlist sync update",
+    "color": color,
+    "fields": fields,
+    "footer": {"text": "allowlist-sync"},
+    "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
 }
 
 payload = {"embeds": [embed]}
@@ -246,6 +257,7 @@ print(json.dumps(payload))
   if [[ -n "$DISCORD_USERNAME" ]]; then
     payload="$("$PYTHON3" -c 'import json,sys; p=json.loads(sys.argv[1]); p["username"]=sys.argv[2]; print(json.dumps(p))' "$payload" "$DISCORD_USERNAME")"
   fi
+
   if [[ -n "$DISCORD_AVATAR_URL" ]]; then
     payload="$("$PYTHON3" -c 'import json,sys; p=json.loads(sys.argv[1]); p["avatar_url"]=sys.argv[2]; print(json.dumps(p))' "$payload" "$DISCORD_AVATAR_URL")"
   fi
@@ -265,24 +277,28 @@ discord_notify_error() {
   payload="$("$PYTHON3" -c '
 import json, sys
 from datetime import datetime, timezone
+
 domain, ctx, msg = sys.argv[1:4]
+
 embed = {
-  "title": "🟠 Allowlist sync FAILED",
-  "color": 15105570,
-  "fields": [
-    {"name": "Domain", "value": domain, "inline": True},
-    {"name": "Context", "value": ctx, "inline": True},
-    {"name": "Error", "value": f"```text\n{msg[:900]}\n```", "inline": False},
-  ],
-  "footer": {"text": "allowlist-sync"},
-  "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    "title": "🟠 Allowlist sync FAILED",
+    "color": 15105570,
+    "fields": [
+        {"name": "Domain", "value": domain, "inline": True},
+        {"name": "Context", "value": ctx, "inline": True},
+        {"name": "Error", "value": f"```text\n{msg[:900]}\n```", "inline": False},
+    ],
+    "footer": {"text": "allowlist-sync"},
+    "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
 }
-print(json.dumps({"embeds":[embed]}))
+
+print(json.dumps({"embeds": [embed]}))
 ' "$domain" "$ctx" "$msg")"
 
   if [[ -n "$DISCORD_USERNAME" ]]; then
     payload="$("$PYTHON3" -c 'import json,sys; p=json.loads(sys.argv[1]); p["username"]=sys.argv[2]; print(json.dumps(p))' "$payload" "$DISCORD_USERNAME")"
   fi
+
   if [[ -n "$DISCORD_AVATAR_URL" ]]; then
     payload="$("$PYTHON3" -c 'import json,sys; p=json.loads(sys.argv[1]); p["avatar_url"]=sys.argv[2]; print(json.dumps(p))' "$payload" "$DISCORD_AVATAR_URL")"
   fi
@@ -308,7 +324,9 @@ atomic_write() {
     group="$(stat -c '%g' "$file" 2>/dev/null || echo "")"
     perm="$(stat -c '%a' "$file" 2>/dev/null || echo "")"
   else
-    owner=""; group=""; perm=""
+    owner=""
+    group=""
+    perm=""
   fi
 
   printf "%s" "$content" >"$tmp"
